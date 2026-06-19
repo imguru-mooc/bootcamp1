@@ -352,16 +352,20 @@ print("정답   :", y)
 
 > 모델 파일은 약 4MB로 매우 작습니다. `_quant` 는 **양자화(quantization)** 된 모델이라는 뜻으로, 정수 연산만 사용해 CPU에서 빠르고 가볍게 동작합니다.
 
-**4‑2.** 분류할 테스트 이미지를 준비합니다. 일상 사물·동물 사진이면 무엇이든 좋습니다(이 모델은 ImageNet 1000종 사물을 인식합니다). 직접 찍은 사진을 `test.jpg` 라는 이름으로 `~/ai_lab` 에 둡니다.
+**4‑2.** 분류할 테스트 이미지를 준비합니다. 직접 찍은 사진을 써도 되지만, 실습을 곧바로 진행할 수 있도록 **공개 샘플 이미지(고양이)** 를 라즈베리 파이에서 직접 받아 `test.jpg` 로 저장합니다.
 
 ```bash
+(ai_env) $ cd ~/ai_lab
+# 공개 샘플 이미지(BMP)를 받아 JPG(test.jpg)로 변환 — PIL은 실습 1에서 설치함
+(ai_env) $ wget -q https://raw.githubusercontent.com/google-coral/test_data/master/cat.bmp
+(ai_env) $ python -c "from PIL import Image; Image.open('cat.bmp').convert('RGB').save('test.jpg')"
 (ai_env) $ ls test.jpg
 ```
 ```
 출력 ▶ test.jpg
 ```
 
-> 💡 사진이 없다면 인터넷에서 고양이·개·컵·바나나 등의 JPG 이미지를 받아 `test.jpg` 로 저장하세요.
+> 💡 위 샘플은 고양이 사진이라 아래 4‑4의 결과처럼 `Egyptian cat` 으로 분류됩니다. 직접 찍은 사물·동물 사진(JPG)을 `test.jpg` 로 바꿔 두면 그 사진으로 분류해 볼 수 있습니다. 이 모델은 ImageNet 1000종을 인식합니다.
 
 **4‑3.** 추론 스크립트를 작성합니다.
 
@@ -455,21 +459,36 @@ for i in top5:
 
 이 방식의 장점은 분명합니다. 학습 데이터가 적어도(클래스당 수십 장) 동작하고, 라즈베리 파이 CPU에서도 **분류기 헤드만** 학습하므로 빠릅니다. 무엇보다 **실습 3의 퍼셉트론 학습이 그대로 재등장**합니다 — 이번엔 입력이 "원시 픽셀"이 아니라 "사전 학습 모델이 뽑은 특성"일 뿐입니다.
 
-**5‑1.** 데이터를 준비합니다. 분류하고 싶은 2개 클래스의 사진을 폴더로 나눕니다(클래스당 5~20장 권장).
+**5‑1.** 데이터를 준비합니다. **고양이·개 공개 데이터셋**을 라즈베리 파이에서 받아, 클래스별 폴더(`dataset/cat`, `dataset/dog`)로 구성합니다.
 
 ```bash
 (ai_env) $ cd ~/ai_lab
+# 구글 ML 교육용 고양이·개 데이터셋(약 65MB) 다운로드 및 압축 해제
+(ai_env) $ wget -q https://storage.googleapis.com/mledu-datasets/cats_and_dogs_filtered.zip
+(ai_env) $ unzip -q -o cats_and_dogs_filtered.zip
+```
+```
+출력 ▶ (조용히 완료 — -q 옵션으로 로그를 숨김)
+```
+
+압축을 풀면 `cats_and_dogs_filtered/train/cats`, `.../train/dogs` 에 각각 수천 장의 JPG가 들어 있습니다. 이 중 **클래스당 30장씩**만 실습용 폴더로 복사합니다(학습이 금방 끝나도록 일부만 사용).
+
+```bash
 (ai_env) $ mkdir -p dataset/cat dataset/dog
-(ai_env) $ ls dataset/cat dataset/dog
+(ai_env) $ ls cats_and_dogs_filtered/train/cats/*.jpg | head -30 | xargs -I{} cp {} dataset/cat/
+(ai_env) $ ls cats_and_dogs_filtered/train/dogs/*.jpg | head -30 | xargs -I{} cp {} dataset/dog/
+# 학습에 쓰지 않은 검증용 사진 한 장도 준비 (뒤의 predict_custom.py 용)
+(ai_env) $ cp "cats_and_dogs_filtered/validation/dogs/$(ls cats_and_dogs_filtered/validation/dogs | head -1)" new_photo.jpg
+(ai_env) $ ls dataset/cat dataset/dog | head
 ```
 ```
 출력 ▶ dataset/cat:
-       cat01.jpg  cat02.jpg  cat03.jpg ...
+       cat.0.jpg  cat.1.jpg  cat.2.jpg ...
        dataset/dog:
-       dog01.jpg  dog02.jpg  dog03.jpg ...
+       dog.0.jpg  dog.1.jpg  dog.2.jpg ...
 ```
 
-> 💡 사진이 없다면 실습 4에서 쓰던 `test.jpg` 처럼 인터넷에서 몇 장씩 받아 채워도 됩니다. **클래스별로 폴더만 정확히 나누면** 됩니다.
+> 💡 더 정확한 분류기를 원하면 `head -30` 을 `head -100` 등으로 늘려 더 많은 사진을 복사하세요(과제 3번 참고). 직접 찍은 사진으로 채워도 됩니다 — **클래스별 폴더만 정확히 나누면** 됩니다.
 
 **5‑2.** 특성 추출 스크립트를 작성합니다. 사전 학습 MobileNet의 출력(1001차원)을 각 이미지의 **특성 벡터**로 저장합니다.
 
@@ -660,14 +679,18 @@ print(f"예측: {names[i]} ({p[i]*100:.1f}%)")
 
 > 이 모델도 약 4MB로 작고 양자화돼 있어 CPU에서 동작합니다. 출력이 분류 모델과 달리 **4종**(상자·클래스·점수·개수)이라는 점이 핵심 차이입니다.
 
-**6‑2.** 탐지할 이미지를 준비합니다. 사람·자동차·동물 등 여러 사물이 함께 있는 사진이 좋습니다.
+**6‑2.** 탐지할 이미지를 준비합니다. 여러 사물이 함께 있는 사진이 좋습니다. **공개 샘플(여러 사람과 연이 있는 해변 사진)** 을 받아 `street.jpg` 로 저장합니다.
 
 ```bash
+(ai_env) $ cd ~/ai_lab
+(ai_env) $ wget -q https://raw.githubusercontent.com/tensorflow/models/master/research/object_detection/test_images/image2.jpg -O street.jpg
 (ai_env) $ ls street.jpg
 ```
 ```
 출력 ▶ street.jpg
 ```
+
+> 💡 이 사진에는 사람·연 등 여러 객체가 있어 다중 객체 탐지를 확인하기 좋습니다(탐지 개수는 임계값에 따라 달라집니다). 사람·자동차·동물이 함께 있는 직접 찍은 사진으로 바꿔도 됩니다.
 
 **6‑3.** 탐지 스크립트를 작성합니다.
 
@@ -776,6 +799,19 @@ print(f"\n탐지된 사물: {found}개 → detected.jpg 저장")
 ```
 
 > 이 모델의 입력은 257×257, 출력은 **(257, 257, 21)** — 각 픽셀에 대해 21개 클래스의 점수입니다. 픽셀별로 가장 점수 높은 클래스를 고르면 마스크가 됩니다.
+
+이어서 분할할 **사람 사진**을 받아 `person.jpg` 로 저장합니다. (세그멘테이션 결과로 사람 윤곽이 마스크로 분리됩니다.)
+
+```bash
+(ai_env) $ wget -q https://raw.githubusercontent.com/google-coral/test_data/master/grace_hopper.bmp
+(ai_env) $ python -c "from PIL import Image; Image.open('grace_hopper.bmp').convert('RGB').save('person.jpg')"
+(ai_env) $ ls person.jpg
+```
+```
+출력 ▶ person.jpg
+```
+
+> 💡 사람이 또렷하게 나온 사진일수록 분할 결과가 깨끗합니다. 직접 찍은 인물 사진(JPG)을 `person.jpg` 로 바꿔도 됩니다.
 
 **7‑2.** 세그멘테이션 스크립트를 작성합니다.
 
@@ -1067,7 +1103,8 @@ $ cat /sys/class/thermal/thermal_zone0/temp
 | `pip install` 이 소스 컴파일을 시작하며 매우 느림 | 맞는 wheel을 못 찾음 | 64비트 OS·Python 3.10인지 확인. `pip install --upgrade pip` 후 재시도 |
 | `ModuleNotFoundError: No module named 'ai_edge_litert'` | 가상환경 미활성화 또는 설치 실패 | 프롬프트에 `(ai_env)` 가 있는지 확인 후 `pip install ai-edge-litert` 재실행 |
 | `MemoryError` / 설치 중 멈춤(2GB 모델) | RAM 부족 | swap 추가: `sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile` |
-| `FileNotFoundError: test.jpg` | 이미지 파일 없음/경로 오류 | `ls ~/ai_lab/test.jpg` 로 파일 위치 확인 |
+| `FileNotFoundError: test.jpg` | 이미지 파일 없음/경로 오류 | `ls ~/ai_lab/test.jpg` 로 파일 위치 확인. 실습 4‑2의 다운로드를 다시 실행 |
+| `dataset/cat`·`dataset/dog` 가 비어 있음(특성 추출 0장) | 압축 해제 경로/복사 명령 오류 | `ls cats_and_dogs_filtered/train/cats | head` 로 원본 확인 후 실습 5‑1의 `cp` 명령 재실행. `~/ai_lab` 에서 실행했는지 확인 |
 | `libopenblas.so.0: cannot open shared object file` | 수치 연산 라이브러리 누락 | `sudo apt install -y libopenblas-dev` 후 재실행 |
 | 추론이 갈수록 느려짐 | 발열로 인한 throttling | 방열판/팬 장착, CPU 온도 확인(실습 9‑2) |
 | `wget` 다운로드 실패 | 네트워크/방화벽 | 인터넷 연결 확인, 브라우저로 URL 접속해 수동 다운로드 후 보드로 복사 |
