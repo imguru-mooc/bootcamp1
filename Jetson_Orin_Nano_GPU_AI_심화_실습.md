@@ -103,12 +103,14 @@ $ nvcc --version
 
 > 〔Jetson〕 `nvcc: command not found` 가 그대로 나오면 `ls -d /usr/local/cuda*` 로 실제 설치 경로(버전 번호)를 확인하세요. 링크가 `/usr/local/cuda-12.6` 등 다른 버전을 가리키면 그 경로로 PATH를 맞춥니다.
 
-**0‑4.** **jetson-stats** 를 설치해 방금 설치한 스택을 한눈에 검증합니다.
+**0‑4.** **jetson-stats** 를 설치해 방금 설치한 스택을 한눈에 검증합니다. jetson-stats는 백그라운드 서비스(`jtop.service`)를 등록하는 **시스템 도구**라 가상환경이 아닌 시스템 전역에 설치합니다.
 
 ```bash
-$ sudo pip3 install -U jetson-stats
-$ sudo reboot                                  # 서비스 적용을 위해 1회 재부팅
+$ sudo pip3 install -U jetson-stats --break-system-packages
+$ sudo reboot                                  # 서비스(jtop.service) 적용을 위해 1회 재부팅
 ```
+
+> 〔Jetson〕 `--break-system-packages` 없이 실행하면 최신 Ubuntu에서 **`error: externally-managed-environment`** (PEP 668)로 막힙니다. 시스템 파이썬을 보호하려는 장치인데, jetson-stats는 시스템 서비스를 등록해야 하므로 이 옵션으로 전역 설치합니다. `pip3` 가 없으면 먼저 `sudo apt install -y python3-pip` 를 실행하세요. (격리 설치를 원하면 `sudo apt install -y pipx && sudo pipx install jetson-stats` 도 가능합니다.)
 
 재부팅 후, 스택 요약을 출력합니다.
 
@@ -766,6 +768,7 @@ GPIO.cleanup()
 | `import tensorrt` / `import cv2` 실패 | venv가 시스템 패키지를 못 봄 | venv를 `--system-site-packages` 로 다시 생성(실습 1‑1) |
 | `nvcc: command not found` | `nvidia-jetpack`(CUDA Toolkit) 미설치 또는 PATH 누락 | `sudo apt install nvidia-jetpack`(실습 0‑2) 후 `export PATH=/usr/local/cuda/bin:$PATH`(실습 0‑3) |
 | `apt`에서 `Unable to locate package nvidia-jetpack` | NVIDIA Jetson 저장소 미등록 | `cat /etc/apt/sources.list.d/nvidia-l4t-apt-source.list` 확인 후 저장소 등록·`apt update`(실습 0‑1) |
+| `pip` 설치 시 `error: externally-managed-environment` | 최신 Ubuntu의 PEP 668 보호(시스템 파이썬 직접 설치 차단) | 시스템 도구(jetson-stats 등)는 `--break-system-packages` 추가, 또는 `pipx`/가상환경 사용(실습 0‑4) |
 | `trtexec: command not found` | TensorRT bin 경로 누락 | `export PATH=/usr/src/tensorrt/bin:$PATH` (실습 4‑2) |
 | 추론이 벤치마크보다 느림 | 저전력 모드/클럭 미고정 | `sudo nvpmodel -m 0 && sudo jetson_clocks`(실습 0‑5) |
 | LLM/대형 모델 실행 중 멈춤·OOM | 메모리 부족 | 더 작은 모델(1b) 사용, 다른 앱 종료, swap 확보, MAXN SUPER 적용 |
