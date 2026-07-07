@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YOLO26 물체 추적 주행 - PonyBot</title>
+<style>
+  :root{
+    --bg:#0e1726; --card:#16213a; --line:#27375c;
+    --txt:#e8eefc; --muted:#8da3cc; --accent:#34d399; --warn:#f87171; --amber:#f59e0b; --blue:#60a5fa;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',-apple-system,sans-serif;}
+  body{background:var(--bg);color:var(--txt);padding:16px;max-width:960px;margin:0 auto;}
+  h1{font-size:20px;margin-bottom:4px;}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:16px;}
+  .row{display:flex;gap:14px;flex-wrap:wrap;}
+  .col{flex:1;min-width:300px;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:14px;}
+  .videowrap{position:relative;border-radius:12px;overflow:hidden;background:#000;aspect-ratio:4/3;}
+  video,canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
+  canvas{transform:scaleX(-1);}         /* 캔버스에 프레임+박스를 모두 그림 (미러 표시) */
+  video{visibility:hidden;}             /* 원본 비디오는 캔버스의 소스로만 사용 */
+  button{background:var(--accent);color:#06281c;border:none;border-radius:10px;
+    padding:11px 14px;font-size:14px;font-weight:700;cursor:pointer;}
+  button.sec{background:#22325a;color:var(--txt);}
+  button.stop{background:var(--warn);color:#3d0808;}
+  button:disabled{opacity:.45;cursor:not-allowed;}
+  .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
+  .pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700;}
+  .ok{background:#0f3d2e;color:var(--accent);}
+  .no{background:#3d1414;color:var(--warn);}
+  .wait{background:#3d2f0f;color:var(--amber);}
+  .label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.5px;}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
+  code{background:#0c1426;padding:2px 6px;border-radius:6px;color:#fbbf24;font-size:12px;}
+  .note{font-size:12px;color:var(--muted);line-height:1.6;}
+  select,input[type=text]{width:100%;background:#0c1426;border:1px solid var(--line);border-radius:10px;
+    padding:10px;color:var(--txt);font-size:13px;}
+  input[type=range]{width:100%;}
+  label.chk{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;}
+  .cmdbox{text-align:center;padding:12px 8px;border-radius:12px;background:#0c1426;border:1px solid var(--line);}
+  .cmdbox .icon{font-size:40px;line-height:1;}
+  .cmdbox .name{font-size:18px;font-weight:800;margin-top:4px;}
+  .stat{display:flex;justify-content:space-between;font-size:13px;margin:6px 0;}
+  .stat b{color:var(--blue);}
+</style>
+</head>
+<body>
+  <h1>🎯 YOLO26 물체 추적 주행</h1>
+  <div class="sub">물체가 왼쪽에 = 좌회전 · 멀면(작으면) 전진 · 가까우면(크면) 후진 — 물체를 따라다니는 포니봇</div>
+
+  <div class="row">
+    <div class="col">
+      <div class="card">
+        <div class="label" style="margin-bottom:6px">① 모델 불러오기</div>
+        <input id="modelUrl" type="text" value="./yolo26n.onnx" placeholder="onnx 모델 주소">
+        <div class="btns">
+          <button id="btnModel">📦 모델 불러오기</button>
+          <span id="modelState" class="pill no" style="align-self:center">미로딩</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="label" style="margin-bottom:6px">② 연결 &amp; 시작</div>
+        <div class="videowrap">
+          <video id="video" playsinline muted></video>
+          <canvas id="canvas"></canvas>
+        </div>
+        <div class="btns">
+          <button id="btnCam" disabled>📷 카메라 시작</button>
+          <button id="btnBle" class="sec">🔵 블루투스 연결</button>
+          <button id="btnStop" class="stop">🛑 긴급 정지</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="card">
+        <div class="grid3">
+          <div><div class="label">블루투스</div><span id="bleState" class="pill no">미연결</span></div>
+          <div><div class="label">추적</div><span id="trackState" class="pill no">대기</span></div>
+          <div><div class="label">전송</div><span id="autoState" class="pill wait">일시정지</span></div>
+        </div>
+        <div class="btns">
+          <button id="btnAuto" class="sec" style="width:100%">▶️ 자동 전송 시작 / 일시정지</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="label" style="margin-bottom:6px">추적할 물체</div>
+        <select id="target"></select>
+        <div class="cmdbox" style="margin-top:10px">
+          <div class="icon" id="cmdIcon">🛑</div>
+          <div class="name" id="cmdName">stop</div>
+        </div>
+        <div style="margin-top:8px">
+          <div class="stat"><span>가로 위치 (0.5=중앙)</span><b id="sX">-</b></div>
+          <div class="stat"><span>크기 (화면 대비 %)</span><b id="sA">-</b></div>
+          <div class="stat"><span>추론 속도</span><b id="sT">-</b></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="label">신뢰도 기준 <span id="confVal" style="color:var(--txt)">50%</span></div>
+        <input id="conf" type="range" min="25" max="80" value="50">
+        <div class="label" style="margin-top:10px">목표 크기(거리) <span id="areaVal" style="color:var(--txt)">10%</span></div>
+        <input id="area" type="range" min="4" max="30" value="10">
+        <div class="note">물체가 목표 크기보다 작으면 다가가고(전진), 크면 물러납니다(후진).</div>
+        <label class="chk" style="margin-top:8px"><input type="checkbox" id="invSteer"> 좌우 반전 (조향이 반대면 체크)</label>
+      </div>
+    </div>
+  </div>
+
+  <div class="card note">
+    <b>사용 순서</b><br>
+    1) 포니봇에서 <code>pony_ble_drive.py</code> 실행 (지난 실습과 동일 펌웨어!)<br>
+    2) <b>모델 불러오기</b>(최초 1회 다운로드, 수 초) → <b>블루투스 연결</b>(<code>ESP-000</code>) → <b>카메라 시작</b><br>
+    3) 박스가 잘 그려지는지 먼저 확인 → <b>자동 전송 시작</b> → 물체를 천천히 움직여 보세요<br>
+    ⚠️ HTTPS(GitHub Pages) 필수 · Chrome/Edge · iOS Safari 미지원 · 🛡️ 물체가 사라지면 자동 정지
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js" crossorigin="anonymous"></script>
+<script>
+// ===== Nordic UART =====
+const UART_SERVICE='6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const UART_RX     ='6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+
+// ===== COCO 80 클래스 =====
+const COCO=['person','bicycle','car','motorcycle','airplane','bus','train','truck','boat','traffic light',
+'fire hydrant','stop sign','parking meter','bench','bird','cat','dog','horse','sheep','cow',
+'elephant','bear','zebra','giraffe','backpack','umbrella','handbag','tie','suitcase','frisbee',
+'skis','snowboard','sports ball','kite','baseball bat','baseball glove','skateboard','surfboard','tennis racket','bottle',
+'wine glass','cup','fork','knife','spoon','bowl','banana','apple','sandwich','orange',
+'broccoli','carrot','hot dog','pizza','donut','cake','chair','couch','potted plant','bed',
+'dining table','toilet','tv','laptop','mouse','remote','keyboard','cell phone','microwave','oven',
+'toaster','sink','refrigerator','book','clock','vase','scissors','teddy bear','hair drier','toothbrush'];
+
+// ===== 설정 =====
+const IMG=320;            // 모델 입력 크기 (코랩 export와 일치해야 함)
+const DEAD=0.12;          // 조향 데드존 (중앙 0.5 ± DEAD)
+const AREA_BAND=0.04;     // 목표 크기 허용 범위 (±)
+const MISS_STOP=4;        // 연속 미탐지 추론 → 정지
+
+// ===== 상태 =====
+let session=null, inName='', outName='';
+let rxChar=null, running=false, autoSend=false;
+let miss=0, lastCmd='', lastSend=0;
+let lastDets=[];          // 최신 탐지 결과 (렌더 루프가 그림)
+let rafId=null;
+const ICONS={forward:'⬆️', backward:'⬇️', left:'⬅️', right:'➡️', stop:'🛑'};
+
+const $=(id)=>document.getElementById(id);
+const video=$('video'), canvas=$('canvas'), ctx=canvas.getContext('2d');
+const off=document.createElement('canvas'); off.width=IMG; off.height=IMG;
+const offCtx=off.getContext('2d',{willReadFrequently:true});
+
+COCO.forEach((n,i)=>{const o=document.createElement('option');o.value=i;o.textContent=n;$('target').appendChild(o);});
+$('target').value=0; // person
+
+function pill(id,t,c){const e=$(id);e.textContent=t;e.className='pill '+c;}
+
+// ---------- ① 모델 로딩 ----------
+async function loadModel(){
+  pill('modelState','로딩 중...','wait');
+  ort.env.wasm.wasmPaths='https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
+  const url=$('modelUrl').value.trim();
+  try{
+    try{ session=await ort.InferenceSession.create(url,{executionProviders:['webgpu']}); }
+    catch(_){ session=await ort.InferenceSession.create(url,{executionProviders:['wasm']}); }
+    inName=session.inputNames[0]; outName=session.outputNames[0];
+    pill('modelState','로딩 완료','ok');
+    $('btnCam').disabled=false;
+  }catch(e){
+    pill('modelState','실패','no');
+    alert('모델 로딩 실패: '+e.message+'\n- yolo26n.onnx가 웹앱과 같은 저장소에 있는지 확인하세요');
+  }
+}
+
+// ---------- ② BLE ----------
+async function connectBLE(){
+  if(!navigator.bluetooth){ alert('Web Bluetooth 미지원 브라우저입니다. Chrome/Edge를 쓰세요.'); return; }
+  try{
+    const dev=await navigator.bluetooth.requestDevice({filters:[{namePrefix:'ESP'}],optionalServices:[UART_SERVICE]});
+    dev.addEventListener('gattserverdisconnected',()=>{rxChar=null;pill('bleState','미연결','no');});
+    const srv=await (await dev.gatt.connect()).getPrimaryService(UART_SERVICE);
+    rxChar=await srv.getCharacteristic(UART_RX);
+    pill('bleState','연결됨','ok');
+  }catch(e){ alert('연결 실패: '+e.message); }
+}
+async function send(text){
+  if(!rxChar) return;
+  try{
+    const msg=new TextEncoder().encode(text);
+    if(rxChar.writeValueWithoutResponse) await rxChar.writeValueWithoutResponse(msg);
+    else await rxChar.writeValue(msg);
+  }catch(e){}
+}
+function pushCmd(cmd){
+  const now=performance.now();
+  if(cmd!==lastCmd && now-lastSend>120){ send(cmd); lastCmd=cmd; lastSend=now; }
+}
+
+// ---------- ③ 렌더 루프: 카메라 프레임 + 박스 그리기 (매끄러운 프리뷰) ----------
+function renderLoop(){
+  if(!running) return;
+  if(video.readyState>=2){
+    canvas.width=video.videoWidth||640; canvas.height=video.videoHeight||480;
+    ctx.drawImage(video,0,0,canvas.width,canvas.height);   // ★ 프레임을 직접 그림
+    const sx=canvas.width/IMG, sy=canvas.height/IMG;
+    for(const b of lastDets){
+      const x1=b.x1*sx, y1=b.y1*sy, x2=b.x2*sx, y2=b.y2*sy;
+      ctx.strokeStyle=b.isTarget?'#34d399':'#60a5fa';
+      ctx.lineWidth=b.isTarget?4:2;
+      ctx.strokeRect(x1,y1,x2-x1,y2-y1);
+      ctx.fillStyle=ctx.strokeStyle; ctx.font='bold 14px sans-serif';
+      // 캔버스가 CSS로 미러되므로 글자는 뒤집어 그려야 바로 보임
+      ctx.save(); ctx.translate(x1,y1-4); ctx.scale(-1,1);
+      ctx.fillText(COCO[b.cls]+' '+Math.round(b.conf*100)+'%',-(x2-x1),0);
+      ctx.restore();
+    }
+  }
+  rafId=requestAnimationFrame(renderLoop);
+}
+
+// ---------- ④ 전처리: 비디오 → (1,3,320,320) float32 ----------
+function preprocess(){
+  offCtx.drawImage(video,0,0,IMG,IMG);
+  const d=offCtx.getImageData(0,0,IMG,IMG).data;
+  const n=IMG*IMG;
+  const arr=new Float32Array(3*n);
+  for(let i=0;i<n;i++){
+    arr[i]    =d[i*4]  /255;   // R
+    arr[n+i]  =d[i*4+1]/255;   // G
+    arr[2*n+i]=d[i*4+2]/255;   // B
+  }
+  return new ort.Tensor('float32',arr,[1,3,IMG,IMG]);
+}
+
+// ---------- ⑤ 탐지 → 제어 판단 ----------
+function decide(best){
+  if(!best){
+    miss++;
+    if(miss>=MISS_STOP){ pill('trackState','놓침','no'); return 'stop'; }
+    return null;
+  }
+  miss=0;
+  pill('trackState','추적 중','ok');
+  const targetArea=(+$('area').value)/100;
+  let cx=best.cx;
+  if($('invSteer').checked) cx=1-cx;
+  if(cx<0.5-DEAD) return 'left';
+  if(cx>0.5+DEAD) return 'right';
+  if(best.area<targetArea-AREA_BAND) return 'forward';
+  if(best.area>targetArea+AREA_BAND) return 'backward';
+  return 'stop';
+}
+
+// ---------- ⑥ 추론 루프 (느려도 프리뷰는 렌더 루프가 담당) ----------
+async function detectLoop(){
+  while(running){
+    const t0=performance.now();
+    if(session && video.readyState>=2){
+      const out=(await session.run({[inName]:preprocess()}))[outName];
+      const d=out.data;
+      const th=(+$('conf').value)/100;
+      const want=+$('target').value;
+
+      const dets=[]; let best=null, bestConf=0;
+      for(let i=0;i<out.dims[1];i++){
+        const o=i*6;
+        const conf=d[o+4];
+        if(conf<th) continue;
+        const cls=Math.round(d[o+5]);
+        const isTarget=(cls===want);
+        dets.push({x1:d[o],y1:d[o+1],x2:d[o+2],y2:d[o+3],conf,cls,isTarget});
+        if(isTarget && conf>bestConf){
+          bestConf=conf;
+          const cxRaw=((d[o]+d[o+2])/2)/IMG;
+          best={cx:1-cxRaw,   // 미러 화면 기준
+                area:((d[o+2]-d[o])*(d[o+3]-d[o+1]))/(IMG*IMG)};
+        }
+      }
+      lastDets=dets;
+
+      $('sX').textContent=best?best.cx.toFixed(2):'-';
+      $('sA').textContent=best?(best.area*100).toFixed(1)+'%':'-';
+
+      const cmd=decide(best);
+      if(cmd!==null){
+        $('cmdIcon').textContent=ICONS[cmd]; $('cmdName').textContent=cmd;
+        if(autoSend) pushCmd(cmd);
+      }
+      $('sT').textContent=Math.round(performance.now()-t0)+' ms';
+    }
+    await new Promise(r=>setTimeout(r,30));
+  }
+}
+
+// ---------- ⑦ 카메라 시작/정지 (토글) ----------
+async function startCamera(){
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({video:{width:640,height:480}});
+    video.srcObject=stream; await video.play();
+  }catch(e){ alert('카메라 실패: '+e.message); return; }
+  running=true;
+  $('btnCam').textContent='⏹ 카메라 정지';
+  renderLoop(); detectLoop();
+}
+function stopCamera(){
+  running=false;
+  if(rafId){ cancelAnimationFrame(rafId); rafId=null; }
+  if(video.srcObject){ video.srcObject.getTracks().forEach(t=>t.stop()); video.srcObject=null; }
+  // 안전: 자동 전송 중단 + 로봇 정지
+  autoSend=false; pill('autoState','일시정지','wait');
+  send('stop'); lastCmd='';
+  lastDets=[]; miss=0;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  pill('trackState','대기','no');
+  $('sX').textContent='-'; $('sA').textContent='-'; $('sT').textContent='-';
+  $('btnCam').textContent='📷 카메라 시작';
+}
+function toggleCamera(){ running ? stopCamera() : startCamera(); }
+
+// ---------- 이벤트 ----------
+$('btnModel').onclick=loadModel;
+$('btnBle').onclick=connectBLE;
+$('btnCam').onclick=toggleCamera;
+$('btnAuto').onclick=()=>{
+  autoSend=!autoSend;
+  pill('autoState',autoSend?'전송 중':'일시정지',autoSend?'ok':'wait');
+  if(!autoSend){ send('stop'); lastCmd=''; }
+};
+$('btnStop').onclick=()=>{ autoSend=false; pill('autoState','일시정지','wait'); send('stop'); lastCmd=''; };
+$('conf').oninput=(e)=>$('confVal').textContent=e.target.value+'%';
+$('area').oninput=(e)=>$('areaVal').textContent=e.target.value+'%';
+</script>
+</body>
+</html>

@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>포니봇 — 내가 학습시킨 AI로 제어 (Teachable Machine)</title>
+<style>
+  :root{ --navy:#1f3864; --blue:#2563eb; --teal:#0e9e92; --amber:#e08a1e;
+         --green:#2e7d46; --red:#c0463b; --purple:#6d45c0; --ink:#1f2937; --muted:#6b7280; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:"맑은 고딕","Malgun Gothic",system-ui,sans-serif;
+        background:#f5f7fa; color:var(--ink); padding:20px; }
+  .wrap{ max-width:620px; margin:0 auto; }
+  h1{ color:var(--navy); font-size:21px; margin:0 0 4px; }
+  .sub{ color:var(--muted); font-size:14px; margin:0 0 16px; }
+  .card{ background:#fff; border:1px solid #e7ecf2; border-radius:14px; padding:16px; margin-bottom:14px; }
+  #status{ background:#eef3fe; border:1px solid var(--blue); color:var(--navy);
+           border-radius:10px; padding:11px 13px; font-weight:bold; font-size:14px; }
+  .row{ display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
+  input[type=text]{ width:100%; padding:11px 12px; border:1px solid #d8dee8; border-radius:10px;
+                    font-size:14px; font-family:inherit; }
+  button{ font-family:inherit; font-size:15px; font-weight:bold; border:none; border-radius:10px;
+          padding:12px 16px; cursor:pointer; color:#fff; }
+  button:disabled{ opacity:.45; cursor:not-allowed; }
+  #btnLoad{ background:var(--amber); }
+  #btnConnect{ background:var(--blue); }
+  #btnCam{ background:var(--purple); font-size:17px; padding:14px; width:100%; }
+  #btnCam.on{ background:var(--red); }
+  .dirs button{ background:#fff; color:var(--navy); border:1px solid #d8dee8; flex:1; min-width:84px; }
+  .view{ position:relative; width:100%; aspect-ratio:4/3; background:#000; border-radius:12px; overflow:hidden; }
+  video{ width:100%; height:100%; object-fit:cover; }
+  .label{ font-size:13px; font-weight:bold; color:var(--muted); margin:6px 0; }
+  .bars > div{ margin:6px 0; }
+  .bar-top{ display:flex; justify-content:space-between; font-size:13px; margin-bottom:2px; }
+  .bar{ height:12px; background:#eef1f6; border-radius:6px; overflow:hidden; }
+  .bar > i{ display:block; height:100%; background:var(--purple); width:0%; transition:width .1s; }
+  #cmd{ font-size:20px; font-weight:800; color:var(--teal); margin-top:8px; }
+  .map-row{ display:flex; align-items:center; gap:8px; margin:6px 0; }
+  .map-row .nm{ flex:1; font-weight:bold; color:var(--navy); font-size:14px; word-break:break-all; }
+  select{ padding:8px; border:1px solid #d8dee8; border-radius:8px; font-size:14px; font-family:inherit; }
+  .hint{ font-size:12.5px; color:var(--muted); line-height:1.6; }
+  code{ background:#eef1f6; padding:1px 6px; border-radius:5px; }
+  .thr{ display:flex; align-items:center; gap:10px; font-size:13px; color:var(--muted); margin-top:6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🧠 포니봇 — 내가 학습시킨 AI로 제어</h1>
+  <p class="sub">Teachable Machine 이미지 모델을 불러와, 사물을 보여주면 포니봇이 움직입니다.</p>
+
+  <div class="card">
+    <div id="status">초기화 중...</div>
+  </div>
+
+  <!-- STEP 1: 모델 불러오기 -->
+  <div class="card">
+    <div class="label">① 내 모델 URL (Teachable Machine → Export → Upload 후 나오는 주소)</div>
+    <input type="text" id="modelUrl" placeholder="https://teachablemachine.withgoogle.com/models/XXXXXXXX/">
+    <div class="row"><button id="btnLoad">모델 불러오기</button></div>
+  </div>
+
+  <!-- STEP 2: 클래스 → 명령 매핑 -->
+  <div class="card" id="mapCard" style="display:none;">
+    <div class="label">② 클래스 → 명령 연결 (학습한 사물마다 동작 지정)</div>
+    <div id="mapList"></div>
+  </div>
+
+  <!-- STEP 3: 연결 & 카메라 -->
+  <div class="card">
+    <div class="row">
+      <button id="btnConnect">③ 포니봇 연결</button>
+      <button id="btnCam" disabled>④ 카메라 시작</button>
+    </div>
+    <div class="thr">신뢰도 임계값
+      <input type="range" id="thr" min="50" max="95" value="80" style="flex:1;">
+      <span id="thrVal">80%</span>
+    </div>
+  </div>
+
+  <!-- 카메라 + 예측 -->
+  <div class="card">
+    <div class="view"><video id="video" playsinline muted autoplay></video></div>
+    <div class="label">예측 결과</div>
+    <div class="bars" id="bars"></div>
+    <div id="cmd">대기</div>
+  </div>
+
+  <!-- 수동 테스트 -->
+  <div class="card">
+    <div style="font-size:13px;font-weight:bold;color:#6b7280;margin-bottom:4px;">수동 테스트 (연결 확인용)</div>
+    <div class="row dirs">
+      <button data-cmd="forward">전진</button>
+      <button data-cmd="left">좌회전</button>
+      <button data-cmd="stop">정지</button>
+      <button data-cmd="right">우회전</button>
+      <button data-cmd="backward">후진</button>
+    </div>
+  </div>
+
+  <p class="hint">
+    ※ <b>Chrome</b> + <b>HTTPS 주소</b>(GitHub Pages 등)에서 실행하세요. 카메라·블루투스 권한 허용 필요.<br>
+    ※ 정지용으로 <b>"배경/없음" 클래스</b>를 하나 만들어 두면 안전합니다(아무것도 안 보일 때 정지).<br>
+    ※ 학습할 때와 <b>비슷한 거리·배경·조명</b>에서 보여줘야 잘 맞습니다.
+  </p>
+</div>
+
+<!-- TensorFlow.js + Teachable Machine Image (TM 공식 권장 버전) -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teachablemachine-image.min.js"></script>
+<script>
+// ── 포니봇 BLE UUID (ble_library.py의 Nordic UART 서비스와 일치) ──
+const NUS_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const NUS_RX      = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+
+const $ = id => document.getElementById(id);
+const setStatus = m => { $('status').textContent = m; };
+
+let rxChar = null, model = null, labels = [], running = false, stream = null;
+let labelMap = {};                 // 클래스이름 -> 명령
+let THRESH = 0.80;
+const video = $('video');
+
+// ── 신뢰도 슬라이더 ──
+$('thr').oninput = e => { THRESH = e.target.value/100; $('thrVal').textContent = e.target.value + '%'; };
+
+// ── 1) Web Bluetooth 연결 ──
+$('btnConnect').onclick = async () => {
+  if(!navigator.bluetooth){ setStatus('이 브라우저는 Web Bluetooth 미지원 (Chrome 사용)'); return; }
+  try{
+    const device  = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: 'ESP' }], optionalServices: [NUS_SERVICE] });
+    setStatus('연결 중...');
+    const server  = await device.gatt.connect();
+    const service = await server.getPrimaryService(NUS_SERVICE);
+    rxChar = await service.getCharacteristic(NUS_RX);
+    device.addEventListener('gattserverdisconnected', () => { rxChar = null; setStatus('⚠️ 포니봇 연결 끊김'); });
+    setStatus('✅ 포니봇 연결됨!');
+  }catch(e){ setStatus('연결 실패: ' + e.message); }
+};
+
+// ── 2) 명령 전송 ──
+async function sendCommand(cmd){
+  $('cmd').textContent = cmd;
+  if(!rxChar) return;
+  try{
+    const data = new TextEncoder().encode(cmd);
+    if(rxChar.writeValueWithoutResponse) await rxChar.writeValueWithoutResponse(data);
+    else await rxChar.writeValue(data);
+  }catch(e){ setStatus('전송 실패: ' + e.message); }
+}
+document.querySelectorAll('[data-cmd]').forEach(b => b.onclick = () => sendCommand(b.dataset.cmd));
+
+// ── 3) 모델 불러오기 ──
+function autoCmd(label){
+  const t = label.toLowerCase();
+  if(/전진|앞|forward|go/.test(t))            return 'forward';
+  if(/후진|뒤|back/.test(t))                  return 'backward';
+  if(/좌|왼|left/.test(t))                    return 'left';
+  if(/우|오른|right/.test(t))                 return 'right';
+  if(/정지|멈|stop|배경|없음|none|idle/.test(t)) return 'stop';
+  return 'stop';
+}
+const CMD_OPTS = [['forward','전진'],['backward','후진'],['left','좌회전'],['right','우회전'],['stop','정지'],['ignore','무시']];
+
+function buildMapUI(){
+  const list = $('mapList'); list.innerHTML = '';
+  labelMap = {};
+  labels.forEach(name => {
+    const def = autoCmd(name);
+    labelMap[name] = def;
+    const row = document.createElement('div'); row.className = 'map-row';
+    const nm = document.createElement('div'); nm.className = 'nm'; nm.textContent = name;
+    const sel = document.createElement('select');
+    CMD_OPTS.forEach(([v,t]) => {
+      const o = document.createElement('option'); o.value = v; o.textContent = t;
+      if(v === def) o.selected = true; sel.appendChild(o);
+    });
+    sel.onchange = () => { labelMap[name] = sel.value; };
+    row.appendChild(nm); row.appendChild(sel);
+    list.appendChild(row);
+  });
+  $('mapCard').style.display = '';
+}
+
+$('btnLoad').onclick = async () => {
+  let base = $('modelUrl').value.trim();
+  if(!base){ setStatus('① 모델 URL을 입력하세요.'); return; }
+  if(!base.endsWith('/')) base += '/';
+  setStatus('🧠 모델 로딩 중...');
+  try{
+    model  = await tmImage.load(base + 'model.json', base + 'metadata.json');
+    labels = model.getClassLabels();
+    buildMapUI();
+    $('btnCam').disabled = false;
+    setStatus('✅ 모델 로딩 완료! 클래스: ' + labels.join(', '));
+  }catch(e){ setStatus('모델 로딩 실패: ' + e.message + ' (URL·HTTPS 확인)'); }
+};
+
+// ── 4) 예측 바 그리기 ──
+function renderBars(preds){
+  $('bars').innerHTML = preds.map(p => {
+    const pct = Math.round(p.probability * 100);
+    return '<div><div class="bar-top"><span>' + p.className + ' → ' +
+           (labelMap[p.className]||'-') + '</span><span>' + pct + '%</span></div>' +
+           '<div class="bar"><i style="width:' + pct + '%"></i></div></div>';
+  }).join('');
+}
+
+// ── 5) 카메라 + 추론 루프 ──
+let candidate = '', frames = 0, sent = '';
+const STABLE = 4;            // 같은 결과 4회 유지 시 전송(떨림 방지)
+
+async function loop(){
+  if(!running) return;
+  let top = null;
+  try{
+    const preds = await model.predict(video);
+    preds.sort((a,b) => b.probability - a.probability);
+    renderBars(preds);
+    top = preds[0];
+  }catch(e){}
+
+  let cmd = 'stop';
+  if(top && top.probability >= THRESH) cmd = labelMap[top.className] || 'stop';
+
+  if(cmd === 'ignore'){ candidate = ''; frames = 0; }
+  else{
+    if(cmd === candidate) frames++; else { candidate = cmd; frames = 1; }
+    if(frames === STABLE && cmd !== sent){ sent = cmd; sendCommand(cmd); }
+  }
+  setTimeout(loop, 120);
+}
+
+$('btnCam').onclick = async () => {
+  if(running){ stopCam(); return; }
+  if(!window.isSecureContext || !navigator.mediaDevices){
+    setStatus('🔒 카메라는 HTTPS에서만 됩니다. https 주소로 열어주세요.'); return; }
+  if(!model){ setStatus('먼저 ① 모델을 불러오세요.'); return; }
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' } })
+             .catch(() => navigator.mediaDevices.getUserMedia({ video:true }));
+    video.srcObject = stream;
+    await video.play();
+    running = true;
+    $('btnCam').classList.add('on'); $('btnCam').textContent = '■ 카메라 중지';
+    setStatus('📷 학습한 사물을 카메라에 보여주세요.');
+    loop();
+  }catch(e){ setStatus('카메라 시작 실패: ' + (e.message||e)); }
+};
+
+function stopCam(){
+  running = false;
+  if(stream){ stream.getTracks().forEach(t => t.stop()); stream = null; }
+  video.srcObject = null;
+  $('btnCam').classList.remove('on'); $('btnCam').textContent = '④ 카메라 시작';
+  $('cmd').textContent = '대기'; sent = '';
+  setStatus('카메라 중지됨.');
+  if(rxChar) sendCommand('stop');
+}
+
+setStatus('준비 완료! ① 모델 URL 입력 → 불러오기');
+</script>
+</body>
+</html>
